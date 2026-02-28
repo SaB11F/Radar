@@ -94,6 +94,8 @@ router.get("/:radarId/analytics", protectRoute, async (req, res) => {
       ownerUser: req.user._id,
     });
 
+    const speedLimit = radar.speedLimit ?? 50;
+
     if (!radar) {
       return res.status(404).json({ message: "Radar not found" });
     }
@@ -120,7 +122,7 @@ router.get("/:radarId/analytics", protectRoute, async (req, res) => {
                 maxSpeed: { $max: "$speedKmh" },
                 violations: {
                   $sum: {
-                    $cond: [{ $gt: ["$speedKmh", 50] }, 1, 0],
+                    $cond: [{ $gt: ["$speedKmh", speedLimit] }, 1, 0],
                   },
                 },
               },
