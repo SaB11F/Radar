@@ -172,4 +172,56 @@ router.get("/:radarId/analytics", protectRoute, async (req, res) => {
   }
 });
 
+router.delete("/:radarId", protectRoute, async (req, res) => {
+  try {
+    const { radarId } = req.params;
+
+    const radar = await Radar.findOneAndDelete({
+      radarId,
+      ownerUser: req.user._id,
+    });
+
+    if (!radar) {
+      return res.status(404).json({ message: "Radar not found" });
+    }
+
+    // izbriši tudi vse evente
+    await SpeedEvent.deleteMany({
+      radarId,
+      ownerUser: req.user._id,
+    });
+
+    return res.json({ message: "Radar deleted" });
+  } catch (err) {
+    console.error("Delete radar error:", err);
+    return res.status(500).json({ message: "Failed to delete radar" });
+  }
+});
+
+router.patch("/:radarId", protectRoute, async (req, res) => {
+  try {
+    const { radarId } = req.params;
+    const { name, speedLimit } = req.body;
+
+    const radar = await Radar.findOne({
+      radarId,
+      ownerUser: req.user._id,
+    });
+
+    if (!radar) {
+      return res.status(404).json({ message: "Radar not found" });
+    }
+
+    if (name !== undefined) radar.name = name;
+    if (speedLimit !== undefined) radar.speedLimit = speedLimit;
+
+    await radar.save();
+
+    return res.json(radar);
+  } catch (err) {
+    console.error("Update radar error:", err);
+    return res.status(500).json({ message: "Failed to update radar" });
+  }
+});
+
 export default router;

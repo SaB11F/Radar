@@ -22,6 +22,10 @@ const radarSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    speedLimit:{
+      type: Number,
+      default: 50,
+    },
   },
   { timestamps: true }
 );
