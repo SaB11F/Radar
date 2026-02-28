@@ -80,4 +80,96 @@ router.get("/:radarId/events", protectRoute, async (req, res) => {
   }
 });
 
+router.get("/:radarId/analytics", protectRoute, async (req, res) => {
+  try {
+    const { radarId } = req.params;
+    const { range = "24h" } = req.query;
+
+    if (range !== "24h") {
+      return res.status(400).json({ message: "Unsupported range for now" });
+    }
+
+    const radar = await Radar.findOne({
+      radarId,
+      ownerUser: req.user._id,
+    });
+
+    if (!radar) {
+      return res.status(404).json({ message: "Radar not found" });
+    }
+
+    const now = new Date();
+    const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    const pipeline = [
+      {
+        $match: {
+          radarId,
+          ownerUser: req.user._id,
+          capturedAt: { $gte: since },
+        },
+      },
+      {
+        $facet: {
+          summary: [
+            {
+              $group: {
+                _id: null,
+                vehicles: { $sum: 1 },
+                avgSpeed: { $avg: "$speedKmh" },
+                maxSpeed: { $max: "$speedKmh" },
+                violations: {
+                  $sum: {
+                    $cond: [{ $gt: ["$speedKmh", 50] }, 1, 0],
+                  },
+                },
+              },
+            },
+          ],
+          trend: [
+            {
+              $group: {
+                _id: { $hour: "$capturedAt" },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ],
+        },
+      },
+    ];
+
+    const result = await SpeedEvent.aggregate(pipeline);
+
+    const summary = result[0].summary[0] || {
+      vehicles: 0,
+      avgSpeed: 0,
+      maxSpeed: 0,
+      violations: 0,
+    };
+
+    // ustvarimo 24 bucketov (0–23), tudi če ni podatkov
+    const trendMap = {};
+    result[0].trend.forEach((item) => {
+      trendMap[item._id] = item.count;
+    });
+
+    const trend = Array.from({ length: 24 }, (_, hour) => ({
+      label: `${hour.toString().padStart(2, "0")}:00`,
+      count: trendMap[hour] || 0,
+    }));
+
+    return res.json({
+      vehicles: summary.vehicles || 0,
+      avgSpeed: summary.avgSpeed ? Number(summary.avgSpeed.toFixed(1)) : 0,
+      maxSpeed: summary.maxSpeed || 0,
+      violations: summary.violations || 0,
+      trend,
+    });
+  } catch (err) {
+    console.error("Analytics error:", err);
+    return res.status(500).json({ message: "Failed to fetch analytics" });
+  }
+});
+
 export default router;
