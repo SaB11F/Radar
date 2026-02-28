@@ -44,9 +44,9 @@ router.post("/", protectRoute, async (req, res) => {
 
 router.get("/", protectRoute, async (req, res) => {
   try {
-    const radars = await Radar.find({ ownerUser: req.user._id })
-      .select("radarId name createdAt")
-      .sort({ createdAt: -1 });
+    const radars = await Radar.find({
+      ownerUser: req.user._id,
+    }).sort({ createdAt: -1 });
 
     return res.json(radars);
   } catch (err) {
