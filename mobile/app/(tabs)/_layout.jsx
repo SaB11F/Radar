@@ -26,6 +26,18 @@ export default function TabLayout() {
         }}
     >
         <Tabs.Screen 
+            name="map" 
+            options={{
+                title: "Map",
+                tabBarIcon: ({color,size}) => (<Ionicons 
+                    name='map-outline'
+                    size={size}
+                    color={color}
+                />)
+            }}
+        />
+
+        <Tabs.Screen 
             name="index"
             options={{
                 title: "Home",
@@ -36,35 +48,13 @@ export default function TabLayout() {
                 />)
             }}
         />
-        <Tabs.Screen 
-            name="create" 
-            options={{
-                title: "Create",
-                tabBarIcon: ({color,size}) => (<Ionicons 
-                    name='add-circle-outline'
-                    size={size}
-                    color={color}
-                />)
-            }}
-        />
+
         <Tabs.Screen 
             name="profile" 
             options={{
                 title: "Profile",
                 tabBarIcon: ({color,size}) => (<Ionicons 
                     name='person-outline'
-                    size={size}
-                    color={color}
-                />)
-            }}
-        />
-
-        <Tabs.Screen 
-            name="map" 
-            options={{
-                title: "Map",
-                tabBarIcon: ({color,size}) => (<Ionicons 
-                    name='map-outline'
                     size={size}
                     color={color}
                 />)
