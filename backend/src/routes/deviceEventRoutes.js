@@ -6,12 +6,35 @@ import SpeedEvent from "../models/SpeedEvent.js";
 
 const router = express.Router();
 
+const parseCoordinatePair = ({ latitude, longitude }) => {
+  const hasAny = latitude !== undefined || longitude !== undefined;
+  if (!hasAny) return { provided: false };
+
+  const lat = typeof latitude === "number" ? latitude : Number(latitude);
+  const lon = typeof longitude === "number" ? longitude : Number(longitude);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return { error: "latitude and longitude must be valid numbers" };
+  }
+
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    return { error: "latitude/longitude out of range" };
+  }
+
+  return { provided: true, latitude: lat, longitude: lon };
+};
+
 router.post("/", deviceAuth, async (req, res) => {
   try {
-    const { speedKmh, capturedAt, meta } = req.body;
+    const { speedKmh, capturedAt, meta, latitude, longitude } = req.body;
 
     if (typeof speedKmh !== "number") {
       return res.status(400).json({ message: "speedKmh must be a number" });
+    }
+
+    const coordinates = parseCoordinatePair({ latitude, longitude });
+    if (coordinates.error) {
+      return res.status(400).json({ message: coordinates.error });
     }
 
     const capturedAtDate = capturedAt ? new Date(capturedAt) : new Date();
@@ -29,6 +52,16 @@ router.post("/", deviceAuth, async (req, res) => {
       speedKmh,
       meta: meta || {},
     });
+
+    if (
+      coordinates.provided &&
+      (req.radar.latitude !== coordinates.latitude ||
+        req.radar.longitude !== coordinates.longitude)
+    ) {
+      req.radar.latitude = coordinates.latitude;
+      req.radar.longitude = coordinates.longitude;
+      await req.radar.save();
+    }
 
     return res.status(201).json({
       eventId: event.eventId,

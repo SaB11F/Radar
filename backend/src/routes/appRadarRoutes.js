@@ -15,9 +15,39 @@ const generateRadarId = () => {
   return `RADAR-${suffix}`;
 };
 
+const parseCoordinatePair = ({ latitude, longitude }) => {
+  const hasAny = latitude !== undefined || longitude !== undefined;
+  if (!hasAny) return { provided: false };
+
+  if (latitude === null || longitude === null) {
+    if (latitude === null && longitude === null) {
+      return { provided: true, clear: true };
+    }
+    return { error: "Both latitude and longitude are required together" };
+  }
+
+  const lat = typeof latitude === "number" ? latitude : Number(latitude);
+  const lon = typeof longitude === "number" ? longitude : Number(longitude);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return { error: "latitude and longitude must be valid numbers" };
+  }
+
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    return { error: "latitude/longitude out of range" };
+  }
+
+  return { provided: true, latitude: lat, longitude: lon };
+};
+
 router.post("/", protectRoute, async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, latitude, longitude } = req.body;
+
+    const coordinates = parseCoordinatePair({ latitude, longitude });
+    if (coordinates.error) {
+      return res.status(400).json({ message: coordinates.error });
+    }
 
     const radarId = generateRadarId();
     const deviceKeyPlain = crypto.randomBytes(18).toString("base64url"); // user-friendly copy/paste
@@ -28,6 +58,9 @@ router.post("/", protectRoute, async (req, res) => {
       name: name || "My Radar",
       ownerUser: req.user._id,
       deviceKeyHash,
+      ...(coordinates.provided && !coordinates.clear
+        ? { latitude: coordinates.latitude, longitude: coordinates.longitude }
+        : {}),
     });
 
     // Vrni plaintext key samo 1x (za vpis v RPi config)
@@ -203,7 +236,12 @@ router.delete("/:radarId", protectRoute, async (req, res) => {
 router.patch("/:radarId", protectRoute, async (req, res) => {
   try {
     const { radarId } = req.params;
-    const { name, speedLimit } = req.body;
+    const { name, speedLimit, latitude, longitude } = req.body;
+
+    const coordinates = parseCoordinatePair({ latitude, longitude });
+    if (coordinates.error) {
+      return res.status(400).json({ message: coordinates.error });
+    }
 
     const radar = await Radar.findOne({
       radarId,
@@ -216,6 +254,15 @@ router.patch("/:radarId", protectRoute, async (req, res) => {
 
     if (name !== undefined) radar.name = name;
     if (speedLimit !== undefined) radar.speedLimit = speedLimit;
+    if (coordinates.provided) {
+      if (coordinates.clear) {
+        radar.latitude = null;
+        radar.longitude = null;
+      } else {
+        radar.latitude = coordinates.latitude;
+        radar.longitude = coordinates.longitude;
+      }
+    }
 
     await radar.save();
 
