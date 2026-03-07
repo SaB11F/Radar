@@ -94,11 +94,11 @@ router.get("/:radarId/analytics", protectRoute, async (req, res) => {
       ownerUser: req.user._id,
     });
 
-    const speedLimit = radar.speedLimit ?? 50;
-
     if (!radar) {
       return res.status(404).json({ message: "Radar not found" });
     }
+
+    const speedLimit = radar.speedLimit ?? 50;
 
     const now = new Date();
     const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
