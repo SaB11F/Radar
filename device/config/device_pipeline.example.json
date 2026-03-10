@@ -1,0 +1,74 @@
+{
+  "camera": {
+    "deviceIndex": 0,
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "fourcc": "MJPG"
+  },
+  "scene": {
+    "roi": {
+      "x": 0,
+      "y": 140,
+      "w": 1120,
+      "h": 560
+    },
+    "line1": {
+      "x1": 100,
+      "y1": 160,
+      "x2": 100,
+      "y2": 690
+    },
+    "line2": {
+      "x1": 1065,
+      "y1": 160,
+      "x2": 1065,
+      "y2": 690
+    },
+    "metersBetweenLines": 8.0
+  },
+  "detector": {
+    "mode": "hybrid",
+    "minContourArea": 4500,
+    "bgHistory": 300,
+    "bgVarThreshold": 25,
+    "dnnEveryNFrames": 2,
+    "dnn": {
+      "protoPath": "models/MobileNetSSD_deploy.prototxt",
+      "modelPath": "models/MobileNetSSD_deploy.caffemodel",
+      "confidenceThreshold": 0.4
+    }
+  },
+  "tracking": {
+    "maxMatchDistancePx": 80,
+    "maxMissedFrames": 8,
+    "minTrackAgeFrames": 4,
+    "crossingEpsilonPx": 6,
+    "maxCrossingWindowSec": 4.0,
+    "eventCooldownSec": 1.2,
+    "minSpeedKmh": 2.0,
+    "maxSpeedKmh": 250.0
+  },
+  "uplink": {
+    "pollSec": 0.5,
+    "retryBaseSec": 1.0,
+    "retryMaxSec": 30.0
+  },
+  "debug": {
+    "showWindow": false,
+    "saveOverlay": true,
+    "saveOverlayEverySec": 2.0,
+    "overlayPath": "data/debug/live_overlay.jpg"
+  },
+  "device": {
+    "latitude": 46.0569,
+    "longitude": 14.5058
+  },
+  "health": {
+    "enabled": true,
+    "logEverySec": 5.0,
+    "writeStatusFile": true,
+    "printToConsole": true,
+    "statusFilePath": "data/health/status.json"
+  }
+}

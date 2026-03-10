@@ -3,17 +3,25 @@ import { View, Text, StyleSheet } from "react-native";
 import Card from "../shared/Card";
 import { theme } from "../../lib/theme";
 
-export default function KpiCard({ label, value, suffix = "", hint = "" }) {
+export default function KpiCard({
+  label,
+  value,
+  suffix = "",
+  hint = "",
+  variant = "secondary",
+  loading = false,
+}) {
+  const isPrimary = variant === "primary";
   return (
-    <Card style={styles.card}>
+    <Card style={[styles.card, isPrimary ? styles.primaryCard : styles.secondaryCard]}>
       <Text style={styles.label}>{label}</Text>
 
       <View style={styles.valueRow}>
-        <Text style={styles.value}>{value}</Text>
-        {suffix ? <Text style={styles.suffix}>{suffix}</Text> : null}
+        <Text style={styles.value}>{loading ? "--" : value}</Text>
+        {!loading && suffix ? <Text style={styles.suffix}>{suffix}</Text> : null}
       </View>
 
-      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+      {hint ? <Text style={styles.hint}>{loading ? "Loading..." : hint}</Text> : null}
     </Card>
   );
 }
@@ -22,6 +30,13 @@ const styles = StyleSheet.create({
   card: {
     flex: 1,
     paddingVertical: theme.spacing.md,
+    borderRadius: 24,
+  },
+  primaryCard: {
+    backgroundColor: theme.colors.cardBackground,
+  },
+  secondaryCard: {
+    backgroundColor: theme.colors.background,
   },
   label: {
     color: theme.colors.textSecondary,

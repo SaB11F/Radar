@@ -28,7 +28,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     checkAuth();
-  }, [])
+  }, [checkAuth])
 
   // handle navigation based on auth state
   useEffect(() => {
@@ -44,7 +44,7 @@ export default function RootLayout() {
       router.replace("/(tabs)");
     }
 
-  }, [user, token, segments]);
+  }, [user, token, segments, router]);
 
 
   return (

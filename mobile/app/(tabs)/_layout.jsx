@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import COLORS from "../../constants/colors";
 
 export default function TabLayout() {
     const insets = useSafeAreaInsets();
@@ -9,28 +10,29 @@ export default function TabLayout() {
     <Tabs
         screenOptions = {{
             headerShown: false,
-            tabBarActiveTintColor: "#4CAF50",
-            headerTitleStyle: {
-                color: "#2e5a2e",
-                fontWeight: "600",
-            },
+            tabBarActiveTintColor: COLORS.primary,
+            tabBarInactiveTintColor: COLORS.textMuted,
             headerShadowVisible: false,
             tabBarStyle:{
-                backgroundColor: "#f1f8f2",
+                backgroundColor: COLORS.cardBackground,
                 borderTopWidth: 1,
-                borderTopColor: "#c8e6c9",
+                borderTopColor: COLORS.border,
                 paddingTop: 5,
                 paddingBottom: insets.bottom,
                 height: 60 + insets.bottom,
+            },
+            tabBarLabelStyle: {
+                fontSize: 11,
+                fontWeight: "700",
             },
         }}
     >
         <Tabs.Screen 
             name="map" 
             options={{
-                title: "Map",
+                title: "Devices",
                 tabBarIcon: ({color,size}) => (<Ionicons 
-                    name='map-outline'
+                    name='radio-outline'
                     size={size}
                     color={color}
                 />)
@@ -40,7 +42,7 @@ export default function TabLayout() {
         <Tabs.Screen 
             name="index"
             options={{
-                title: "Home",
+                title: "Dashboard",
                 tabBarIcon: ({color,size}) => (<Ionicons 
                     name='home-outline'
                     size={size}
@@ -52,9 +54,9 @@ export default function TabLayout() {
         <Tabs.Screen 
             name="profile" 
             options={{
-                title: "Profile",
+                title: "Settings",
                 tabBarIcon: ({color,size}) => (<Ionicons 
-                    name='person-outline'
+                    name='settings-outline'
                     size={size}
                     color={color}
                 />)

@@ -55,13 +55,13 @@ export default function Login() {
                 <Ionicons 
                   name="mail-outline"
                   size={20}
-                  color= "4CAF50"
+                  color={COLORS.primary}
                   style={styles.inputIcon}
                 />
                 <TextInput
                   style={styles.input}
                   placeholder="Email"
-                  placeholderTextColor="767676"
+                  placeholderTextColor={COLORS.placeholderText}
                   value={email}
                   onChangeText={setEmail}
                   keyboardType="email-address"
@@ -78,14 +78,14 @@ export default function Login() {
                 <Ionicons
                   name="lock-closed-outline"
                   size={20}
-                  color= "4CAF50"
+                  color={COLORS.primary}
                   style={styles.inputIcon}
                 />
                 {/*Password Input*/}
                 <TextInput
                   style={styles.input}
                   placeholder="Password"
-                  placeholderTextColor="767676"
+                  placeholderTextColor={COLORS.placeholderText}
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry={!showPassword}
@@ -98,7 +98,7 @@ export default function Login() {
                   <Ionicons
                     name={showPassword ? "eye-outline" : "eye-off-outline"}
                     size={20}
-                    color= "4CAF50"
+                    color={COLORS.primary}
                   />
                 </TouchableOpacity>
               </View>
@@ -119,7 +119,7 @@ export default function Login() {
 
           {/*fotter component - sign up page*/}
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Don't have an account?</Text>
+            <Text style={styles.footerText}>Do not have an account?</Text>
             <Link href="/signup" asChild>
               <TouchableOpacity>
                 <Text style={styles.link}> Sign Up</Text>

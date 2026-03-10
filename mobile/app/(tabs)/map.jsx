@@ -1,63 +1,140 @@
-import React, { useState, useEffect } from "react";
-import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
-import * as Location from "expo-location";
-import { View, StyleSheet } from "react-native";
-import { API_URL } from "../../constants/api";
-import { useAuthStore } from "../../store/authStore";
+import React, { useMemo } from "react";
+import { View, Text, StyleSheet } from "react-native";
+import MapView, { Marker, Callout } from "react-native-maps";
+import COLORS from "../../constants/colors";
+import { useDataStore } from "../../store/dataStore";
 
-const INITIAL_REGION = {
-  latitude: 46.4203,
-  longitude: 15.8700,
-  latitudeDelta: 0.0922,
-  longitudeDelta: 0.0421,
+const DEFAULT_REGION = {
+  latitude: 46.0569,
+  longitude: 14.5058,
+  latitudeDelta: 0.35,
+  longitudeDelta: 0.35,
 };
 
-export default function Map() {
-  const [hasPermission, setHasPermission] = useState(false);
-  const [tasks, setTasks] = useState([]);
+function toCoordinateValue(value) {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  }
+  return NaN;
+}
 
-  const { token } = useAuthStore();
-
-  useEffect(() => {
-    (async () => {
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === "granted") setHasPermission(true);
-    })();
-  }, []);
-
-  // Fetch all tasks
-  useEffect(() => {
-    if (!token) return;
-    fetch(`${API_URL}/tasks/map`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => res.json())
-      .then((data) => setTasks(data.tasks))
-      .catch((err) => console.log("Error fetching tasks:", err));
-  }, [token]);
+function hasValidCoordinates(radar) {
+  const latitude = toCoordinateValue(radar?.latitude);
+  const longitude = toCoordinateValue(radar?.longitude);
 
   return (
-    <View style={{ flex: 1 }}>
-      <MapView
-        style={StyleSheet.absoluteFill}
-        provider={PROVIDER_GOOGLE}
-        initialRegion={INITIAL_REGION}
-        showsUserLocation={hasPermission}
-        showsMyLocationButton={hasPermission}
-      >
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    latitude >= -90 &&
+    latitude <= 90 &&
+    longitude >= -180 &&
+    longitude <= 180
+  );
+}
 
-        {/* DISPLAY ALL TASK MARKERS */}
-        {tasks.map(task => (
+export default function MapScreen() {
+  const radars = useDataStore((s) => s.radars);
+
+  const radarLocations = useMemo(
+    () =>
+      radars
+        .filter(hasValidCoordinates)
+        .map((radar) => ({
+          ...radar,
+          latitude: toCoordinateValue(radar.latitude),
+          longitude: toCoordinateValue(radar.longitude),
+        })),
+    [radars]
+  );
+
+  const initialRegion = useMemo(() => {
+    if (radarLocations.length === 0) return DEFAULT_REGION;
+
+    return {
+      latitude: radarLocations[0].latitude,
+      longitude: radarLocations[0].longitude,
+      latitudeDelta: 0.08,
+      longitudeDelta: 0.08,
+    };
+  }, [radarLocations]);
+
+  return (
+    <View style={styles.container}>
+      <MapView style={styles.map} initialRegion={initialRegion}>
+        {radarLocations.map((radar) => (
           <Marker
-            key={task.id}
-            coordinate={{ latitude: task.lat, longitude: task.lng }}
-            title={task.title}
-            description={task.caption}
-          />
+            key={radar.radarId}
+            coordinate={{ latitude: radar.latitude, longitude: radar.longitude }}
+            pinColor={COLORS.danger}
+          >
+            <Callout tooltip={false}>
+              <View style={styles.callout}>
+                <Text style={styles.calloutTitle}>{radar.name || radar.radarId}</Text>
+                <Text style={styles.calloutText}>Limit: {radar.speedLimit ?? 50} km/h</Text>
+              </View>
+            </Callout>
+          </Marker>
         ))}
-
-
       </MapView>
+
+      {radarLocations.length === 0 && (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyStateText}>No radar locations available</Text>
+        </View>
+      )}
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+  },
+  map: {
+    flex: 1,
+  },
+  callout: {
+    backgroundColor: COLORS.cardBackground,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    minWidth: 140,
+  },
+  calloutTitle: {
+    color: COLORS.textPrimary,
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  calloutText: {
+    color: COLORS.textSecondary,
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  emptyState: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none",
+  },
+  emptyStateText: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    fontWeight: "600",
+    backgroundColor: COLORS.cardBackground,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+});

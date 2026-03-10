@@ -5,10 +5,10 @@ export const theme = {
     ...COLORS,
   },
   radius: {
-    sm: 10,
-    md: 14,
-    lg: 18,
-    xl: 22,
+    sm: 12,
+    md: 18,
+    lg: 24,
+    xl: 28,
   },
   spacing: {
     xs: 8,

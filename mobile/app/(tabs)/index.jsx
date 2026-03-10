@@ -1,44 +1,85 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, ScrollView, StyleSheet, RefreshControl } from "react-native";
 import { theme } from "../../lib/theme";
+
 import DashboardHeader from "../../components/dashboard/DashboardHeader";
 import KpiRow from "../../components/dashboard/KpiRow";
+import TrafficChart from "../../components/dashboard/TrafficChart";
+import ViolationAlertCard from "../../components/dashboard/ViolationAlertCard";
 import RecentEventsList from "../../components/dashboard/RecentEventsList";
+
 import { useRadarStore } from "../../store/radarStore";
 import { useDataStore } from "../../store/dataStore";
 
 export default function DashboardScreen() {
   const selectedRadarId = useRadarStore((s) => s.selectedRadarId);
+  const setSelectedRadarId = useRadarStore((s) => s.setSelectedRadarId);
 
   const radars = useDataStore((s) => s.radars);
   const events = useDataStore((s) => s.events);
-  const kpis = useDataStore((s) => s.kpis);
+  const analytics = useDataStore((s) => s.analytics);
+
   const fetchRadars = useDataStore((s) => s.fetchRadars);
   const fetchEvents = useDataStore((s) => s.fetchEvents);
+  const fetchAnalytics = useDataStore((s) => s.fetchAnalytics);
+
   const isLoadingRadars = useDataStore((s) => s.isLoadingRadars);
   const isLoadingEvents = useDataStore((s) => s.isLoadingEvents);
+  const isLoadingAnalytics = useDataStore((s) => s.isLoadingAnalytics);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
 
-  // 1) load radars on mount
+  const refreshing =
+    isLoadingRadars || isLoadingEvents || isLoadingAnalytics;
+  const isDashboardLoading = isLoadingAnalytics || isLoadingEvents;
+
+  const fetchRadarData = useCallback(
+    async (radarId) => {
+      if (!radarId) return;
+
+      await Promise.all([
+        fetchAnalytics({ radarId }),
+        fetchEvents({ radarId, limit: 20 }),
+      ]);
+
+      setLastUpdatedAt(new Date());
+    },
+    [fetchAnalytics, fetchEvents]
+  );
+
   useEffect(() => {
     fetchRadars();
-  }, []);
+  }, [fetchRadars]);
 
-  // 2) whenever selected radar changes -> load events
   useEffect(() => {
-    const fallbackRadar = radars?.[0]?.radarId;
-    const radarIdToLoad =
-      !selectedRadarId || selectedRadarId === "ALL" ? fallbackRadar : selectedRadarId;
+    if (radars.length > 0 && !selectedRadarId) {
+      const firstRadarId = radars[0].radarId;
+      setSelectedRadarId(firstRadarId);
+    }
+  }, [radars, selectedRadarId, setSelectedRadarId]);
 
-    if (radarIdToLoad) fetchEvents({ radarId: radarIdToLoad, limit: 50 });
-  }, [selectedRadarId, radars?.length]);
+  useEffect(() => {
+    if (!selectedRadarId) return;
 
-  const refreshing = isLoadingRadars || isLoadingEvents;
+    fetchRadarData(selectedRadarId);
+  }, [selectedRadarId, fetchRadarData]);
+
+  const selectedRadar = useMemo(
+    () => radars.find((r) => r.radarId === selectedRadarId) || null,
+    [radars, selectedRadarId]
+  );
+
+  const activeRadar = selectedRadar || radars[0] || null;
 
   const visibleEvents = useMemo(() => {
-    // Če selected = ALL, trenutno kaže events za fallback radar (MVP).
-    // Kasneje lahko naredimo backend endpoint "events for all radars".
-    return events;
-  }, [events]);
+    const limitKmh = activeRadar?.speedLimit ?? 50;
+    const radarName = activeRadar?.name;
+    return events.map((event) => ({
+      ...event,
+      limitKmh,
+      radarName: radarName || event.radarName || event.radarId,
+      isViolation: typeof event.speedKmh === "number" ? event.speedKmh > limitKmh : false,
+    }));
+  }, [events, activeRadar]);
 
   return (
     <View style={styles.container}>
@@ -47,16 +88,32 @@ export default function DashboardScreen() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={async () => {
-              await fetchRadars();
-              const radarId = radars?.[0]?.radarId;
-              if (radarId) await fetchEvents({ radarId, limit: 50 });
+              const radarId = activeRadar?.radarId;
+              if (!radarId) return;
+
+              await fetchRadarData(radarId);
             }}
           />
         }
       >
-        <DashboardHeader radars={radars} />
-        <KpiRow kpis={kpis} />
-        <RecentEventsList events={visibleEvents} />
+        <DashboardHeader
+          radars={radars}
+          selectedRadar={activeRadar}
+          lastUpdatedAt={lastUpdatedAt}
+        />
+        
+        <KpiRow
+          analytics={analytics}
+          speedLimit={activeRadar?.speedLimit ?? 50}
+          isLoading={isDashboardLoading && !!activeRadar}
+        />
+
+        <TrafficChart trend={analytics?.trend} isLoading={isLoadingAnalytics && !!activeRadar} />
+
+        <ViolationAlertCard analytics={analytics} />
+
+        <RecentEventsList events={visibleEvents} isLoading={isLoadingEvents && !!activeRadar} />
+
         <View style={{ height: 40 }} />
       </ScrollView>
     </View>
@@ -64,5 +121,8 @@ export default function DashboardScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.colors.background },
+  container: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
 });

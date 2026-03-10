@@ -11,9 +11,9 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert
 } from 'react-native'
 import Toast from 'react-native-toast-message';
+import COLORS from "../../constants/colors";
 
 import { useAuthStore } from '../../store/authStore';
 
@@ -26,7 +26,7 @@ export default function Signup() {
 
   //const [isLoading, setIsLoading] = useState(false);
 
-  const { user, isLoading, register } = useAuthStore();
+  const { isLoading, register } = useAuthStore();
 
   const router = useRouter();
 
@@ -39,7 +39,7 @@ export default function Signup() {
       Toast.show({
         type: 'error',
         text1: 'Registration Error',
-        text2: result.message,
+        text2: result.error,
       });
       return;
     }
@@ -75,13 +75,13 @@ export default function Signup() {
                 <Ionicons 
                   name="person-outline"
                   size={20}
-                  color="#4CAF50"
+                  color={COLORS.primary}
                   style={styles.icon}
                 />
                 <TextInput
                   style={styles.input}
                   placeholder="Enter your username"
-                  placeholderTextColor="#767676"
+                  placeholderTextColor={COLORS.placeholderText}
                   value={username}
                   onChangeText={setUsername}
                   autoCapitalize="none"
@@ -96,13 +96,13 @@ export default function Signup() {
                   <Ionicons
                     name="mail-outline"
                     size={20}
-                    color="#4CAF50"
+                    color={COLORS.primary}
                     style={styles.inputIcon}
                   />
                   <TextInput
                     style={styles.input}
                     placeholder="Enter your email"
-                    placeholderTextColor="#767676"
+                    placeholderTextColor={COLORS.placeholderText}
                     value={email}
                     onChangeText={setEmail}
                     keyboardType="email-address"
@@ -119,13 +119,13 @@ export default function Signup() {
                 <Ionicons
                   name="lock-closed-outline"
                   size={20}
-                  color="#4CAF50"
+                  color={COLORS.primary}
                   style={styles.inputIcon}
                 />
                 <TextInput
                   style={styles.input}
                   placeholder="Enter your password"
-                  placeholderTextColor="#767676"
+                  placeholderTextColor={COLORS.placeholderText}
                   value={password}
                   onChangeText={setPassword}
                   secureTextEntry={!showPassword}
@@ -137,7 +137,7 @@ export default function Signup() {
                   <Ionicons
                     name={showPassword ? "eye-outline" : "eye-off-outline"}
                     size={20}
-                    color="#4CAF50"
+                    color={COLORS.primary}
                   />
                 </TouchableOpacity>
               </View>

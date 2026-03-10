@@ -1,0 +1,5 @@
+{
+  "backendUrl": "https://your-backend.example.com",
+  "radarId": "RADAR-XXXXXX",
+  "deviceKey": "REPLACE_ME"
+}

@@ -1,4 +1,4 @@
-import { View, Text, TouchableOpacity, Alert, Platform } from "react-native";
+import { Text, TouchableOpacity, Alert, Platform } from "react-native";
 import styles from "../../assets/styles/profile.styles";
 import { Ionicons } from "@expo/vector-icons";
 import COLORS from "../../constants/colors";

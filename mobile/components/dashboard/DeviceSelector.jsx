@@ -7,17 +7,18 @@ export default function DeviceSelector({ radars = [] }) {
   const selectedRadarId = useRadarStore((s) => s.selectedRadarId);
   const setSelectedRadarId = useRadarStore((s) => s.setSelectedRadarId);
 
-  const options = useMemo(() => {
-    const base = [{ radarId: "ALL", name: "All devices" }];
-    const list = radars.map((r) => ({ radarId: r.radarId, name: r.name || r.radarId }));
-    return [...base, ...list];
-  }, [radars]);
+  const options = useMemo(
+    () => radars.map((r) => ({ radarId: r.radarId, name: r.name || r.radarId })),
+    [radars]
+  );
+
+  const activeRadarId = selectedRadarId || options[0]?.radarId || null;
 
   return (
     <View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         {options.map((opt) => {
-          const active = selectedRadarId === opt.radarId;
+          const active = activeRadarId === opt.radarId;
           return (
             <Pressable
               key={opt.radarId}

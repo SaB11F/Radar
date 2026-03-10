@@ -2,79 +2,129 @@
 import { create } from "zustand";
 import { api } from "../lib/apiClient";
 
-const calcKpis = (events, limitKmh = 50) => {
-  const vehicles = events.length;
-  const avgSpeed =
-    vehicles === 0
-      ? 0
-      : Math.round((events.reduce((acc, e) => acc + (e.speedKmh || 0), 0) / vehicles) * 10) / 10;
+export const useDataStore = create((set) => ({
+  /*
+    ---------------------------
+    STATE
+    ---------------------------
+  */
 
-  const violations = events.filter((e) => (e.speedKmh || 0) > limitKmh).length;
-  return { vehicles, avgSpeed, violations, limitKmh };
-};
-
-export const useDataStore = create((set, get) => ({
   radars: [],
   events: [],
-  kpis: { vehicles: 0, avgSpeed: 0, violations: 0, limitKmh: 50 },
+
+  analytics: {
+    vehicles: 0,
+    avgSpeed: 0,
+    violations: 0,
+    maxSpeed: 0,
+    trend: [],
+  },
 
   isLoadingRadars: false,
   isLoadingEvents: false,
+  isLoadingAnalytics: false,
+
   error: null,
+
+  /*
+    ---------------------------
+    RADARS
+    ---------------------------
+  */
 
   fetchRadars: async () => {
     set({ isLoadingRadars: true, error: null });
+
     try {
-      // pričakovan endpoint:
-      // GET /api/app/radars
       const data = await api.get("/app/radars");
-      // če backend vrača { radars: [...] } ali kar [...]
       const radars = Array.isArray(data) ? data : data?.radars || [];
+
       set({ radars });
       return radars;
     } catch (e) {
-      set({
-        radars: [],
-        error: e.message,
-      });
+      set({ radars: [], error: e.message });
       return [];
     } finally {
       set({ isLoadingRadars: false });
     }
   },
 
-  fetchEvents: async ({ radarId, limit = 50 }) => {
-    set({ isLoadingEvents: true, error: null });
-    try {
-      // pričakovan endpoint:
-      // GET /api/app/radars/:radarId/events?limit=50
-      const data = await api.get(`/app/radars/${radarId}/events?limit=${limit}`);
-      const events = Array.isArray(data) ? data : data?.events || [];
-      // normalizacija violation flag-a (optional)
-      const limitKmh = get().kpis?.limitKmh ?? 50;
-      const normalized = events.map((e) => ({
-        ...e,
-        isViolation: (e.speedKmh || 0) > limitKmh,
-      }));
+  /*
+    ---------------------------
+    EVENTS (RAW DATA)
+    ---------------------------
+  */
 
-      set({ events: normalized, kpis: calcKpis(normalized, limitKmh) });
-      return normalized;
+  fetchEvents: async ({ radarId, limit = 20 }) => {
+    set({ isLoadingEvents: true, error: null });
+
+    try {
+      const data = await api.get(
+        `/app/radars/${radarId}/events?limit=${limit}`
+      );
+
+      const events = Array.isArray(data) ? data : data?.events || [];
+
+      set({ events });
+      return events;
     } catch (e) {
-      set({
-        events: [],
-        kpis: { vehicles: 0, avgSpeed: 0, violations: 0, limitKmh: 50 },
-        error: e.message,
-      });
+      set({ events: [], error: e.message });
       return [];
     } finally {
       set({ isLoadingEvents: false });
     }
   },
 
-  setSpeedLimit: (limitKmh) => {
-    const events = get().events;
-    set({ kpis: calcKpis(events, limitKmh) });
+  /*
+    ---------------------------
+    ANALYTICS (AGGREGATED DATA)
+    ---------------------------
+  */
+
+  fetchAnalytics: async ({ radarId, range = "24h" }) => {
+    set({ isLoadingAnalytics: true, error: null });
+
+    try {
+      const data = await api.get(
+        `/app/radars/${radarId}/analytics?range=${range}`
+      );
+
+      set({ analytics: data });
+      return data;
+    } catch (e) {
+      set({
+        analytics: {
+          vehicles: 0,
+          avgSpeed: 0,
+          violations: 0,
+          maxSpeed: 0,
+          trend: [],
+        },
+        error: e.message,
+      });
+      return null;
+    } finally {
+      set({ isLoadingAnalytics: false });
+    }
   },
 
-  clearData: () => set({ radars: [], events: [], kpis: { vehicles: 0, avgSpeed: 0, violations: 0, limitKmh: 50 } }),
+  /*
+    ---------------------------
+    RESET
+    ---------------------------
+  */
+
+  clearData: () =>
+    set({
+      radars: [],
+      events: [],
+      analytics: {
+        vehicles: 0,
+        avgSpeed: 0,
+        violations: 0,
+        maxSpeed: 0,
+        trend: [],
+      },
+      error: null,
+    }),
 }));
