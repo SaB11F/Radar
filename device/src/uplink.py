@@ -77,3 +77,20 @@ def post_event_with_retry(
             last_err = e
             time.sleep(1.2 * (i + 1))
     raise last_err
+
+
+def fetch_device_radar_config(cfg: UplinkConfig, timeout_sec: float = 6.0) -> Dict[str, Any]:
+    url = f"{cfg.backend_url}/api/device/events/config"
+    headers = {
+        "X-RADAR-ID": cfg.radar_id,
+        "X-DEVICE-KEY": cfg.device_key,
+    }
+    r = requests.get(url, headers=headers, timeout=timeout_sec)
+    try:
+        body = r.json()
+    except Exception:
+        body = {"raw": r.text}
+
+    if r.status_code >= 400:
+        raise RuntimeError(f"{r.status_code}: {body}")
+    return body if isinstance(body, dict) else {}

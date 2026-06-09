@@ -2,6 +2,7 @@ import argparse
 import json
 import math
 import os
+import queue
 import sqlite3
 import threading
 import time
@@ -13,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from uplink import load_uplink_config, post_event
+from uplink import fetch_device_radar_config, load_uplink_config, post_event
 
 
 DEFAULT_CONFIG_PATH = "config/device_pipeline.json"
@@ -47,6 +48,11 @@ MOBILENET_SSD_CLASSES = [
 ]
 
 VEHICLE_CLASS_IDS = {6, 7, 14, 19}  # bus, car, motorbike, train
+
+try:
+    import RPi.GPIO as GPIO  # type: ignore
+except Exception:
+    GPIO = None
 
 
 def iso_now() -> str:
@@ -438,6 +444,153 @@ class HealthMonitor:
             )
 
 
+class RadarLimitClient:
+    def __init__(self, uplink_cfg_path: str, cfg: Dict):
+        obstacle_cfg = cfg["obstacle"]
+        self.enabled = bool(obstacle_cfg["enabled"])
+        self.default_limit = float(obstacle_cfg["defaultSpeedLimitKmh"])
+        self.poll_sec = float(obstacle_cfg["refreshSpeedLimitSec"])
+        self.timeout_sec = float(obstacle_cfg["fetchTimeoutSec"])
+        self.uplink_cfg_path = uplink_cfg_path
+        self._uplink_cfg = None
+        self._current_limit = self.default_limit
+        self._last_fetch_at = 0.0
+
+    @property
+    def current_limit(self) -> float:
+        return self._current_limit
+
+    def _ensure_uplink_cfg(self):
+        if self._uplink_cfg is None:
+            self._uplink_cfg = load_uplink_config(self.uplink_cfg_path)
+
+    def refresh_if_due(self):
+        if not self.enabled:
+            return
+        now = time.time()
+        if now - self._last_fetch_at < self.poll_sec:
+            return
+        self._last_fetch_at = now
+
+        try:
+            self._ensure_uplink_cfg()
+            data = fetch_device_radar_config(self._uplink_cfg, timeout_sec=self.timeout_sec)
+            server_limit = data.get("speedLimit")
+            parsed = float(server_limit)
+            if math.isfinite(parsed) and parsed > 0:
+                self._current_limit = parsed
+        except Exception as exc:
+            print(f"[WARN] speedLimit refresh failed, using cached value ({self._current_limit}): {exc}")
+
+
+class ServoObstacle:
+    def __init__(self, cfg: Dict):
+        obstacle_cfg = cfg["obstacle"]
+        self.enabled = bool(obstacle_cfg["enabled"])
+        self.pin = int(obstacle_cfg["gpioPin"])
+        self.pwm_freq_hz = int(obstacle_cfg["pwmFreqHz"])
+        self.neutral_duty = float(obstacle_cfg["neutralDuty"])
+        self.deploy_duty = float(obstacle_cfg["deployDuty"])
+        self.hold_sec = float(obstacle_cfg["holdSec"])
+        self.cooldown_sec = float(obstacle_cfg["cooldownSec"])
+        self.mock_when_missing = bool(obstacle_cfg["mockModeWhenGpioMissing"])
+
+        self._last_trigger_at = 0.0
+        self._trigger_q: "queue.Queue[Dict[str, Any]]" = queue.Queue(maxsize=20)
+        self._stop_event = threading.Event()
+        self._worker = threading.Thread(target=self._run, daemon=True)
+        self._pwm = None
+        self._gpio_active = False
+
+        if not self.enabled:
+            return
+
+        if GPIO is None:
+            if self.mock_when_missing:
+                print("[WARN] RPi.GPIO unavailable. Servo obstacle running in MOCK mode.")
+            else:
+                print("[WARN] RPi.GPIO unavailable. Servo obstacle disabled.")
+                self.enabled = False
+            return
+
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.pin, GPIO.OUT)
+        self._pwm = GPIO.PWM(self.pin, self.pwm_freq_hz)
+        self._pwm.start(self.neutral_duty)
+        self._gpio_active = True
+        time.sleep(0.2)
+        self._pwm.ChangeDutyCycle(0)
+        print(f"[INFO] Servo obstacle initialized on GPIO {self.pin}.")
+
+    def start(self):
+        if self.enabled:
+            self._worker.start()
+
+    def trigger(self, speed_kmh: float, speed_limit: float, event_id: str):
+        if not self.enabled:
+            return
+        payload = {
+            "speedKmh": round(speed_kmh, 2),
+            "speedLimit": round(speed_limit, 2),
+            "eventId": event_id,
+            "ts": iso_now(),
+        }
+        try:
+            self._trigger_q.put_nowait(payload)
+        except queue.Full:
+            pass
+
+    def _run(self):
+        while not self._stop_event.is_set():
+            try:
+                item = self._trigger_q.get(timeout=0.3)
+            except queue.Empty:
+                continue
+
+            now = time.time()
+            if now - self._last_trigger_at < self.cooldown_sec:
+                continue
+
+            self._last_trigger_at = now
+            if self._gpio_active and self._pwm is not None:
+                try:
+                    self._pwm.ChangeDutyCycle(self.deploy_duty)
+                    time.sleep(self.hold_sec)
+                    self._pwm.ChangeDutyCycle(self.neutral_duty)
+                    time.sleep(0.15)
+                    self._pwm.ChangeDutyCycle(0)
+                    print(
+                        f"[OBSTACLE] deployed event={item['eventId']} speed={item['speedKmh']}"
+                        f" limit={item['speedLimit']}"
+                    )
+                except Exception as exc:
+                    print(f"[WARN] Servo actuation failed: {exc}")
+            else:
+                print(
+                    f"[OBSTACLE-MOCK] deploy event={item['eventId']} speed={item['speedKmh']}"
+                    f" limit={item['speedLimit']}"
+                )
+
+    def stop(self):
+        if not self.enabled:
+            return
+        self._stop_event.set()
+        if self._worker.is_alive():
+            self._worker.join(timeout=2.0)
+        if self._gpio_active and self._pwm is not None:
+            try:
+                self._pwm.ChangeDutyCycle(self.neutral_duty)
+                time.sleep(0.1)
+                self._pwm.stop()
+            except Exception:
+                pass
+            try:
+                GPIO.cleanup(self.pin)
+            except Exception:
+                pass
+
+
 class MultiObjectTracker:
     def __init__(self, cfg: Dict):
         self.cfg = cfg
@@ -571,6 +724,7 @@ def load_config(path: str) -> Dict:
     cfg.setdefault("debug", {})
     cfg.setdefault("device", {})
     cfg.setdefault("health", {})
+    cfg.setdefault("obstacle", {})
 
     cfg["camera"].setdefault("deviceIndex", 0)
     cfg["camera"].setdefault("width", 1280)
@@ -616,6 +770,18 @@ def load_config(path: str) -> Dict:
     cfg["health"].setdefault("writeStatusFile", True)
     cfg["health"].setdefault("printToConsole", True)
     cfg["health"].setdefault("statusFilePath", "data/health/status.json")
+
+    cfg["obstacle"].setdefault("enabled", False)
+    cfg["obstacle"].setdefault("defaultSpeedLimitKmh", 50.0)
+    cfg["obstacle"].setdefault("refreshSpeedLimitSec", 10.0)
+    cfg["obstacle"].setdefault("fetchTimeoutSec", 6.0)
+    cfg["obstacle"].setdefault("gpioPin", 18)
+    cfg["obstacle"].setdefault("pwmFreqHz", 50)
+    cfg["obstacle"].setdefault("neutralDuty", 7.5)
+    cfg["obstacle"].setdefault("deployDuty", 11.0)
+    cfg["obstacle"].setdefault("holdSec", 0.8)
+    cfg["obstacle"].setdefault("cooldownSec", 2.0)
+    cfg["obstacle"].setdefault("mockModeWhenGpioMissing", True)
 
     return cfg
 
@@ -667,7 +833,14 @@ def get_queue_depth(queue: SQLiteQueue) -> int:
         return int(row[0] if row else 0)
 
 
-def create_event_payload(speed_kmh: float, track: Track, dt: float, direction: str, cfg: Dict) -> Dict:
+def create_event_payload(
+    speed_kmh: float,
+    track: Track,
+    dt: float,
+    direction: str,
+    speed_limit_kmh: float,
+    cfg: Dict,
+) -> Dict:
     local_event_id = str(uuid.uuid4())
     lat = cfg["device"].get("latitude")
     lon = cfg["device"].get("longitude")
@@ -681,6 +854,8 @@ def create_event_payload(speed_kmh: float, track: Track, dt: float, direction: s
             "trackId": track.track_id,
             "direction": direction,
             "deltaTimeSec": round(dt, 4),
+            "speedLimitKmh": round(speed_limit_kmh, 2),
+            "isOverLimit": bool(speed_kmh > speed_limit_kmh),
             "label": track.label,
             "confidence": round(track.confidence, 3) if track.confidence is not None else None,
             "bbox": {"x": track.bbox[0], "y": track.bbox[1], "w": track.bbox[2], "h": track.bbox[3]},
@@ -773,11 +948,14 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
 
     detector = VehicleDetector(cfg)
     tracker = MultiObjectTracker(cfg)
+    speed_limit_client = RadarLimitClient(uplink_cfg_path, cfg)
+    obstacle = ServoObstacle(cfg)
+    obstacle.start()
 
-    queue = SQLiteQueue(DEFAULT_DB_PATH)
+    spool_queue = SQLiteQueue(DEFAULT_DB_PATH)
     health = HealthMonitor(cfg)
     stop_event = threading.Event()
-    uplink_worker = UplinkWorker(queue, uplink_cfg_path, stop_event, cfg, health=health)
+    uplink_worker = UplinkWorker(spool_queue, uplink_cfg_path, stop_event, cfg, health=health)
     uplink_worker.start()
 
     events_count = 0
@@ -812,22 +990,34 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
             now = time.perf_counter()
             detections = detector.detect(frame)
             tracks = tracker.update(detections)
+            speed_limit_client.refresh_if_due()
+            speed_limit_kmh = speed_limit_client.current_limit
 
             for tr in tracks:
                 result = process_crossings(tr, now, cfg)
                 if not result:
                     continue
                 speed_kmh, dt, direction = result
-                event_payload = create_event_payload(speed_kmh, tr, dt, direction, cfg)
-                queue.enqueue(event_payload["eventId"], event_payload)
+                event_payload = create_event_payload(
+                    speed_kmh=speed_kmh,
+                    track=tr,
+                    dt=dt,
+                    direction=direction,
+                    speed_limit_kmh=speed_limit_kmh,
+                    cfg=cfg,
+                )
+                spool_queue.enqueue(event_payload["eventId"], event_payload)
+                if speed_kmh > speed_limit_kmh:
+                    obstacle.trigger(speed_kmh, speed_limit_kmh, event_payload["eventId"])
                 events_count += 1
                 last_event_at = event_payload["capturedAt"]
                 print(
                     f"[EVENT] speed={event_payload['speedKmh']} km/h"
+                    f" limit={speed_limit_kmh}"
                     f" dir={direction} track={tr.track_id} eventId={event_payload['eventId']}"
                 )
 
-            queue_depth = get_queue_depth(queue)
+            queue_depth = get_queue_depth(spool_queue)
             health.update_runtime(
                 fps=fps,
                 active_tracks=len(tracks),
@@ -857,6 +1047,7 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
         print("[INFO] Stopping device pipeline...")
     finally:
         health.publish(force=True)
+        obstacle.stop()
         stop_event.set()
         uplink_worker.join(timeout=2.0)
         cap.release()

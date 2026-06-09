@@ -1,1 +1,8 @@
 node_modules
+porocilo/
+
+# Device secrets — contains radarId + deviceKey, never commit
+device/config/uplink.json
+
+# Claude Code local settings (machine-specific)
+.claude/

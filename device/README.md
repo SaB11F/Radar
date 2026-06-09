@@ -8,6 +8,7 @@ This folder now includes a production-style device pipeline with:
 - background uplink worker (measure + send in parallel)
 - calibration tool (no hardcoded ROI/line edits in code)
 - health monitor (FPS, queue depth, camera failures, uplink counters)
+- optional GPIO servo obstacle trigger on overspeed
 
 ## 1) Configure
 
@@ -55,3 +56,16 @@ Outputs:
 - Direction is included in event meta.
 - Device coordinates (`device.latitude`, `device.longitude`) are sent with each event if set.
 - Health reporting cadence/file are configurable under `health` in `device_pipeline.json`.
+- Overspeed threshold is fetched from backend (`/api/device/events/config`) using device credentials.
+- Obstacle behavior is configured in `obstacle` section in `device_pipeline.json`.
+
+## Servo demo mode
+
+In `config/device_pipeline.json`:
+
+- set `obstacle.enabled` to `true`
+- set `obstacle.gpioPin` to your servo signal pin (BCM numbering)
+- tune `neutralDuty` and `deployDuty` for your servo model
+- keep `mockModeWhenGpioMissing=true` for non-Pi testing
+
+When measured speed exceeds radar `speedLimit` from MongoDB, the servo deploys for `holdSec`.

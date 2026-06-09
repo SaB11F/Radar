@@ -70,5 +70,18 @@
     "writeStatusFile": true,
     "printToConsole": true,
     "statusFilePath": "data/health/status.json"
+  },
+  "obstacle": {
+    "enabled": false,
+    "defaultSpeedLimitKmh": 50.0,
+    "refreshSpeedLimitSec": 10.0,
+    "fetchTimeoutSec": 6.0,
+    "gpioPin": 18,
+    "pwmFreqHz": 50,
+    "neutralDuty": 7.5,
+    "deployDuty": 11.0,
+    "holdSec": 0.8,
+    "cooldownSec": 2.0,
+    "mockModeWhenGpioMissing": true
   }
 }

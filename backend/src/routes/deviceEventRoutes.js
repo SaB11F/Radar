@@ -24,6 +24,22 @@ const parseCoordinatePair = ({ latitude, longitude }) => {
   return { provided: true, latitude: lat, longitude: lon };
 };
 
+router.get("/config", deviceAuth, async (req, res) => {
+  try {
+    return res.json({
+      radarId: req.radar.radarId,
+      name: req.radar.name,
+      speedLimit: req.radar.speedLimit ?? 50,
+      latitude: req.radar.latitude ?? null,
+      longitude: req.radar.longitude ?? null,
+      serverTime: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("Device config error:", err);
+    return res.status(500).json({ message: "Failed to fetch device config" });
+  }
+});
+
 router.post("/", deviceAuth, async (req, res) => {
   try {
     const { speedKmh, capturedAt, meta, latitude, longitude } = req.body;
