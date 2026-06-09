@@ -1132,6 +1132,68 @@ class ColorZoneEstimator:
             )
 
 
+class PresenceEstimator:
+    """Dead-simple speed gate: time how long the target colour is visible in the
+    ROI. Colour appears -> start the clock; colour disappears -> stop. The car is
+    in view for roughly (visibleDistance / speed), so speed = distance / time.
+    No lines, no zones - it just asks 'is the blue on screen or not'. A big
+    on-screen 'BLUE px=N' counter shows whether detection is actually working.
+    """
+
+    def __init__(self, cfg: Dict):
+        scene = cfg["scene"]
+        self.roi = scene["roi"]
+        self.meters = float(scene.get("visibleDistanceMeters", 0.5))
+        color = cfg["detector"].get("color", {})
+        self.lower = np.array(color.get("hsvLower", [90, 40, 20]), dtype=np.uint8)
+        self.upper = np.array(color.get("hsvUpper", [140, 255, 255]), dtype=np.uint8)
+        self.min_pixels = int(color.get("minPixels", 60))
+        self.min_visible = float(color.get("minVisibleSec", 0.06))
+        self.max_window = float(cfg["tracking"]["maxCrossingWindowSec"])
+        self.cooldown = float(cfg["tracking"]["eventCooldownSec"])
+        self.max_speed = float(cfg["tracking"]["maxSpeedKmh"])
+        self.present = False
+        self.t_start: Optional[float] = None
+        self.count = 0
+        self.last_event_at = 0.0
+
+    def update(self, frame: np.ndarray, now: float) -> Optional[Tuple[float, float, str]]:
+        x, y, w, h = self.roi["x"], self.roi["y"], self.roi["w"], self.roi["h"]
+        sub = frame[y:y + h, x:x + w]
+        if sub.size == 0:
+            return None
+        hsv = cv2.cvtColor(sub, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, self.lower, self.upper)
+        self.count = int(cv2.countNonZero(mask))
+        present = self.count >= self.min_pixels
+
+        result = None
+        if present and not self.present:
+            self.t_start = now
+        elif not present and self.present and self.t_start is not None:
+            duration = now - self.t_start
+            self.t_start = None
+            if self.min_visible <= duration <= self.max_window and (now - self.last_event_at) >= self.cooldown:
+                speed_kmh = (self.meters / duration) * 3.6
+                if 0 < speed_kmh <= self.max_speed:
+                    self.last_event_at = now
+                    result = (speed_kmh, duration, "pass")
+        self.present = present
+        return result
+
+    def reset(self) -> None:
+        self.present = False
+        self.t_start = None
+
+    def draw(self, overlay: np.ndarray) -> None:
+        x, y, w, h = self.roi["x"], self.roi["y"], self.roi["w"], self.roi["h"]
+        col = (0, 255, 0) if self.present else (0, 0, 255)
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), col, 3)
+        label = f"BLUE px={self.count}  {'PRESENT' if self.present else '...'}"
+        cv2.putText(overlay, label, (x + 8, y + 34),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, col, 2)
+
+
 def run_pipeline(cfg_path: str, uplink_cfg_path: str):
     cfg = load_config(cfg_path)
 
@@ -1177,6 +1239,7 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
     crossing_mode = cfg["tracking"].get("crossingMode", "gate")
     gate = LineGateEstimator(cfg) if crossing_mode == "gate" else None
     color_gate = ColorZoneEstimator(cfg) if crossing_mode == "color" else None
+    presence = PresenceEstimator(cfg) if crossing_mode == "presence" else None
     print(f"[INFO] Crossing mode: {crossing_mode}")
     speed_limit_client = RadarLimitClient(uplink_cfg_path, cfg)
     obstacle = ServoObstacle(cfg)
@@ -1213,6 +1276,8 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
                         gate.reset()
                     if color_gate is not None:
                         color_gate.reset()
+                    if presence is not None:
+                        presence.reset()
                     continue
                 camera_read_failures += 1
                 time.sleep(0.02)
@@ -1229,7 +1294,7 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
                 fps_t0 = time.perf_counter()
 
             now = time.perf_counter()
-            if color_gate is not None:
+            if color_gate is not None or presence is not None:
                 detections = []
                 tracks = []
             else:
@@ -1238,7 +1303,24 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
             speed_limit_client.refresh_if_due()
             speed_limit_kmh = speed_limit_client.current_limit
 
-            if color_gate is not None:
+            if presence is not None:
+                crossings = []
+                presence_result = presence.update(frame, now)
+                if presence_result:
+                    speed_kmh, dt, direction = presence_result
+                    crossings.append((
+                        speed_kmh,
+                        dt,
+                        direction,
+                        Track(
+                            track_id=0,
+                            centroid=(0, 0),
+                            bbox=(0, 0, 0, 0),
+                            label="blue",
+                            confidence=None,
+                        ),
+                    ))
+            elif color_gate is not None:
                 crossings = []
                 color_result = color_gate.update(frame, now)
                 if color_result:
@@ -1318,6 +1400,8 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
                 draw_overlay(overlay, cfg, tracks, events_count, queue_depth, fps)
                 if color_gate is not None:
                     color_gate.draw(overlay)
+                if presence is not None:
+                    presence.draw(overlay)
 
                 if cfg["debug"]["showWindow"]:
                     cv2.imshow("radar_device", overlay)

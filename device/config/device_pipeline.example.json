@@ -27,14 +27,15 @@
       "x2": 1065,
       "y2": 690
     },
-    "metersBetweenLines": 0.3
+    "metersBetweenLines": 0.3,
+    "visibleDistanceMeters": 0.5
   },
   "detector": {
     "mode": "bg",
     "color": {
-      "hsvLower": [100, 80, 30],
-      "hsvUpper": [130, 255, 255],
-      "minPixels": 120,
+      "hsvLower": [90, 40, 20],
+      "hsvUpper": [140, 255, 255],
+      "minPixels": 60,
       "zoneHalfWidthPx": 45
     },
     "minContourArea": 4500,
@@ -48,7 +49,7 @@
     }
   },
   "tracking": {
-    "crossingMode": "color",
+    "crossingMode": "presence",
     "maxMatchDistancePx": 80,
     "maxMissedFrames": 8,
     "minTrackAgeFrames": 4,
