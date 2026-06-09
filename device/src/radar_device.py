@@ -493,6 +493,12 @@ class ServoObstacle:
         self.deploy_duty = float(obstacle_cfg["deployDuty"])
         self.hold_sec = float(obstacle_cfg["holdSec"])
         self.cooldown_sec = float(obstacle_cfg["cooldownSec"])
+        # "sweep" = wiggle back and forth (lively alert), "deploy" = single push+hold
+        self.animation = str(obstacle_cfg.get("animation", "sweep"))
+        self.sweep_low = float(obstacle_cfg.get("sweepLowDuty", 4.0))
+        self.sweep_high = float(obstacle_cfg.get("sweepHighDuty", 11.0))
+        self.sweep_count = int(obstacle_cfg.get("sweepCount", 3))
+        self.sweep_step_sec = float(obstacle_cfg.get("sweepStepSec", 0.25))
         self.mock_when_missing = bool(obstacle_cfg["mockModeWhenGpioMissing"])
 
         self._last_trigger_at = 0.0
@@ -555,13 +561,20 @@ class ServoObstacle:
             self._last_trigger_at = now
             if self._gpio_active and self._pwm is not None:
                 try:
-                    self._pwm.ChangeDutyCycle(self.deploy_duty)
-                    time.sleep(self.hold_sec)
+                    if self.animation == "sweep":
+                        for _ in range(self.sweep_count):
+                            self._pwm.ChangeDutyCycle(self.sweep_high)
+                            time.sleep(self.sweep_step_sec)
+                            self._pwm.ChangeDutyCycle(self.sweep_low)
+                            time.sleep(self.sweep_step_sec)
+                    else:
+                        self._pwm.ChangeDutyCycle(self.deploy_duty)
+                        time.sleep(self.hold_sec)
                     self._pwm.ChangeDutyCycle(self.neutral_duty)
                     time.sleep(0.15)
                     self._pwm.ChangeDutyCycle(0)
                     print(
-                        f"[OBSTACLE] deployed event={item['eventId']} speed={item['speedKmh']}"
+                        f"[OBSTACLE] {self.animation} event={item['eventId']} speed={item['speedKmh']}"
                         f" limit={item['speedLimit']}"
                     )
                 except Exception as exc:

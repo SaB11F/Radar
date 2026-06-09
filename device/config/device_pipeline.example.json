@@ -90,6 +90,11 @@
     "pwmFreqHz": 50,
     "neutralDuty": 7.5,
     "deployDuty": 11.0,
+    "animation": "sweep",
+    "sweepLowDuty": 4.0,
+    "sweepHighDuty": 11.0,
+    "sweepCount": 3,
+    "sweepStepSec": 0.25,
     "holdSec": 0.8,
     "cooldownSec": 2.0,
     "mockModeWhenGpioMissing": true
