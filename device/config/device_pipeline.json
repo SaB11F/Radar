@@ -4,7 +4,9 @@
     "width": 1280,
     "height": 720,
     "fps": 30,
-    "fourcc": "MJPG"
+    "fourcc": "MJPG",
+    "sourceVideo": "",
+    "recordTo": ""
   },
   "scene": {
     "roi": {
@@ -25,10 +27,10 @@
       "x2": 1065,
       "y2": 690
     },
-    "metersBetweenLines": 8.0
+    "metersBetweenLines": 0.3
   },
   "detector": {
-    "mode": "hybrid",
+    "mode": "bg",
     "minContourArea": 4500,
     "bgHistory": 300,
     "bgVarThreshold": 25,
@@ -40,6 +42,7 @@
     }
   },
   "tracking": {
+    "crossingMode": "gate",
     "maxMatchDistancePx": 80,
     "maxMissedFrames": 8,
     "minTrackAgeFrames": 4,
@@ -47,7 +50,7 @@
     "maxCrossingWindowSec": 4.0,
     "eventCooldownSec": 1.2,
     "minSpeedKmh": 2.0,
-    "maxSpeedKmh": 250.0
+    "maxSpeedKmh": 1000.0
   },
   "uplink": {
     "pollSec": 0.5,
@@ -55,7 +58,7 @@
     "retryMaxSec": 30.0
   },
   "debug": {
-    "showWindow": false,
+    "showWindow": true,
     "saveOverlay": true,
     "saveOverlayEverySec": 2.0,
     "overlayPath": "data/debug/live_overlay.jpg"
@@ -72,8 +75,8 @@
     "statusFilePath": "data/health/status.json"
   },
   "obstacle": {
-    "enabled": false,
-    "defaultSpeedLimitKmh": 50.0,
+    "enabled": true,
+    "defaultSpeedLimitKmh": 5.0,
     "refreshSpeedLimitSec": 10.0,
     "fetchTimeoutSec": 6.0,
     "gpioPin": 18,

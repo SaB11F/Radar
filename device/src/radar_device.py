@@ -927,27 +927,150 @@ def process_crossings(track: Track, now: float, cfg: Dict) -> Optional[Tuple[flo
     return speed_kmh, dt, direction
 
 
+class LineGateEstimator:
+    """Identity-free speed gate.
+
+    Instead of relying on per-object tracking (which loses the object at low
+    FPS because the tracker re-assigns a new ID every frame), this keeps the
+    "which side of each line were we on" memory GLOBALLY. It watches the
+    dominant detection (largest blob) and fires when line1 is crossed and then
+    line2 (or vice-versa) within the allowed window, using the time between the
+    two crossings to compute speed.
+
+    Assumes roughly one vehicle in view at a time, which is the case for the
+    demo / a single car on a ramp.
+    """
+
+    def __init__(self, cfg: Dict):
+        self.line1 = cfg["scene"]["line1"]
+        self.line2 = cfg["scene"]["line2"]
+        self.meters = float(cfg["scene"]["metersBetweenLines"])
+        self.epsilon = float(cfg["tracking"]["crossingEpsilonPx"])
+        self.max_window = float(cfg["tracking"]["maxCrossingWindowSec"])
+        self.cooldown = float(cfg["tracking"]["eventCooldownSec"])
+        self.min_speed = float(cfg["tracking"]["minSpeedKmh"])
+        self.max_speed = float(cfg["tracking"]["maxSpeedKmh"])
+
+        # global crossing state (survives tracker/ID churn)
+        self.prev_side_1: Optional[int] = None
+        self.prev_side_2: Optional[int] = None
+        self.t_line1: Optional[float] = None
+        self.t_line2: Optional[float] = None
+        self.last_event_at: float = 0.0
+
+    def reset(self) -> None:
+        # Clear crossing state — used when a recorded video loops back to the
+        # start so the seam between loops doesn't register a phantom crossing.
+        self.prev_side_1 = None
+        self.prev_side_2 = None
+        self.t_line1 = None
+        self.t_line2 = None
+
+    def _expire(self, now: float) -> None:
+        # Drop a lone crossing once it's older than the window so it can't pair
+        # with a much-later crossing of the other line.
+        if self.t_line1 is not None and self.t_line2 is None and (now - self.t_line1) > self.max_window:
+            self.t_line1 = None
+        if self.t_line2 is not None and self.t_line1 is None and (now - self.t_line2) > self.max_window:
+            self.t_line2 = None
+
+    def update(self, detections: List[Detection], now: float) -> Optional[Tuple[float, float, str, Detection]]:
+        if not detections:
+            self._expire(now)
+            return None
+
+        # Dominant detection = largest bounding box (the vehicle, not noise).
+        det = max(detections, key=lambda d: d.bbox[2] * d.bbox[3])
+        s1 = sign_with_deadzone(point_line_side(det.centroid, self.line1), self.epsilon)
+        s2 = sign_with_deadzone(point_line_side(det.centroid, self.line2), self.epsilon)
+
+        crossed = None
+        if self.prev_side_1 is not None and self.prev_side_1 != 0 and s1 != 0 and s1 != self.prev_side_1:
+            crossed = "line1"
+        elif self.prev_side_2 is not None and self.prev_side_2 != 0 and s2 != 0 and s2 != self.prev_side_2:
+            crossed = "line2"
+
+        # Only remember a *definite* side so passing through the deadzone
+        # doesn't erase which side we were last on.
+        if s1 != 0:
+            self.prev_side_1 = s1
+        if s2 != 0:
+            self.prev_side_2 = s2
+
+        if crossed == "line1":
+            self.t_line1 = now
+        elif crossed == "line2":
+            self.t_line2 = now
+
+        self._expire(now)
+
+        if self.t_line1 is not None and self.t_line2 is not None:
+            dt = abs(self.t_line2 - self.t_line1)
+            direction = "line1_to_line2" if self.t_line1 <= self.t_line2 else "line2_to_line1"
+            # Consume the pair regardless of outcome so we don't double-fire.
+            self.t_line1 = None
+            self.t_line2 = None
+
+            if dt <= 0 or dt > self.max_window:
+                return None
+            if now - self.last_event_at < self.cooldown:
+                return None
+
+            speed_kmh = (self.meters / dt) * 3.6
+            if speed_kmh < self.min_speed or speed_kmh > self.max_speed:
+                return None
+
+            self.last_event_at = now
+            return speed_kmh, dt, direction, det
+
+        return None
+
+
 def run_pipeline(cfg_path: str, uplink_cfg_path: str):
     cfg = load_config(cfg_path)
 
     camera = cfg["camera"]
-    cap = cv2.VideoCapture(camera["deviceIndex"], cv2.CAP_V4L2)
-    if not cap.isOpened():
-        raise RuntimeError("Cannot open camera. Check device index and permissions.")
+    source_video = camera.get("sourceVideo") or ""
+    record_to = camera.get("recordTo") or ""
+    from_file = bool(source_video)
 
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*camera["fourcc"]))
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera["width"])
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera["height"])
-    cap.set(cv2.CAP_PROP_FPS, camera["fps"])
+    if from_file:
+        # Demo fallback: replay a recorded run instead of the live camera.
+        cap = cv2.VideoCapture(source_video)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open source video: {source_video}")
+        print(f"[INFO] Replaying recorded video: {source_video}")
+    else:
+        cap = cv2.VideoCapture(camera["deviceIndex"], cv2.CAP_V4L2)
+        if not cap.isOpened():
+            raise RuntimeError("Cannot open camera. Check device index and permissions.")
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*camera["fourcc"]))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera["width"])
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera["height"])
+        cap.set(cv2.CAP_PROP_FPS, camera["fps"])
 
     ok, first_frame = cap.read()
     if not ok or first_frame is None:
-        raise RuntimeError("Failed to capture first frame from camera.")
+        raise RuntimeError("Failed to read first frame from camera/video.")
     frame_h, frame_w = first_frame.shape[:2]
     cfg["scene"]["roi"] = clamp_roi(cfg["scene"]["roi"], frame_w, frame_h)
 
+    # Optional recorder: save a clean live run to reuse later as `sourceVideo`.
+    recorder = None
+    if record_to and not from_file:
+        ensure_parent(record_to)
+        rec_fps = float(camera.get("fps", 30)) or 30.0
+        recorder = cv2.VideoWriter(
+            record_to, cv2.VideoWriter_fourcc(*"mp4v"), rec_fps, (frame_w, frame_h)
+        )
+        recorder.write(first_frame)
+        print(f"[INFO] Recording live frames to: {record_to}")
+
     detector = VehicleDetector(cfg)
     tracker = MultiObjectTracker(cfg)
+    crossing_mode = cfg["tracking"].get("crossingMode", "gate")
+    gate = LineGateEstimator(cfg) if crossing_mode == "gate" else None
+    print(f"[INFO] Crossing mode: {crossing_mode}")
     speed_limit_client = RadarLimitClient(uplink_cfg_path, cfg)
     obstacle = ServoObstacle(cfg)
     obstacle.start()
@@ -976,9 +1099,18 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
         while True:
             ok, frame = cap.read()
             if not ok or frame is None:
+                if from_file:
+                    # Loop the recording so it replays continuously during the demo.
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    if gate is not None:
+                        gate.reset()
+                    continue
                 camera_read_failures += 1
                 time.sleep(0.02)
                 continue
+
+            if recorder is not None:
+                recorder.write(frame)
 
             fps_counter += 1
             fps_dt = time.perf_counter() - fps_t0
@@ -993,11 +1125,32 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
             speed_limit_client.refresh_if_due()
             speed_limit_kmh = speed_limit_client.current_limit
 
-            for tr in tracks:
-                result = process_crossings(tr, now, cfg)
-                if not result:
-                    continue
-                speed_kmh, dt, direction = result
+            if gate is not None:
+                crossings = []
+                gate_result = gate.update(detections, now)
+                if gate_result:
+                    speed_kmh, dt, direction, det = gate_result
+                    crossings.append((
+                        speed_kmh,
+                        dt,
+                        direction,
+                        Track(
+                            track_id=0,
+                            centroid=det.centroid,
+                            bbox=det.bbox,
+                            label=det.label,
+                            confidence=det.confidence,
+                        ),
+                    ))
+            else:
+                crossings = []
+                for tr in tracks:
+                    result = process_crossings(tr, now, cfg)
+                    if result:
+                        speed_kmh, dt, direction = result
+                        crossings.append((speed_kmh, dt, direction, tr))
+
+            for speed_kmh, dt, direction, tr in crossings:
                 event_payload = create_event_payload(
                     speed_kmh=speed_kmh,
                     track=tr,
@@ -1014,7 +1167,7 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
                 print(
                     f"[EVENT] speed={event_payload['speedKmh']} km/h"
                     f" limit={speed_limit_kmh}"
-                    f" dir={direction} track={tr.track_id} eventId={event_payload['eventId']}"
+                    f" dir={direction} eventId={event_payload['eventId']}"
                 )
 
             queue_depth = get_queue_depth(spool_queue)
@@ -1051,6 +1204,8 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
         stop_event.set()
         uplink_worker.join(timeout=2.0)
         cap.release()
+        if recorder is not None:
+            recorder.release()
         cv2.destroyAllWindows()
 
 
