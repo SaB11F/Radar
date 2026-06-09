@@ -1,0 +1,55 @@
+# ============================================================
+#  App 4.0 Radar - device commands (run on the Raspberry Pi)
+#  Copy-paste each numbered block, in order.
+# ============================================================
+
+# --- 1) Get the latest device code (KEEPS your calibrated lines) -------------
+#     Do NOT use `git pull` here - it would overwrite your calibration.
+cd ~/Radar
+git fetch origin
+git checkout origin/main -- device/src/radar_device.py
+
+# --- 2) Set the demo config (color mode + servo on) - preserves your lines ---
+cd ~/Radar/device
+python3 - <<'EOF'
+import json
+p="config/device_pipeline.json"; c=json.load(open(p))
+c["detector"]["mode"]="bg"
+c["detector"]["color"]={"hsvLower":[100,80,30],"hsvUpper":[130,255,255],"minPixels":120,"zoneHalfWidthPx":45}
+c["tracking"]["crossingMode"]="color"; c["tracking"]["maxSpeedKmh"]=1000.0
+c["obstacle"]["enabled"]=True; c["obstacle"]["defaultSpeedLimitKmh"]=5.0
+c["debug"]["showWindow"]=True
+json.dump(c,open(p,"w"),indent=2)
+print("OK -> line1",c["scene"]["line1"],"line2",c["scene"]["line2"],"meters",c["scene"]["metersBetweenLines"])
+EOF
+
+# --- 3) Run the device -------------------------------------------------------
+cd ~/Radar/device
+python3 src/radar_device.py
+#   Watch for: [INFO] Crossing mode: color
+#   Overlay shows two zone boxes (red -> GREEN when they see blue) + "Z1 blue=N".
+#   Roll the blue car: Z1 green -> Z2 green -> [EVENT] speed=... -> servo if >5 km/h.
+#   Stop with CTRL+C.
+
+
+# ============================================================
+#  OPTIONAL
+# ============================================================
+
+# Re-calibrate the two lines / distance (needs the camera + a screen):
+#   cd ~/Radar/device
+#   python3 src/calibrate_scene.py --config config/device_pipeline.json
+#   keys: r=ROI  1=line1 (2 clicks)  2=line2 (2 clicks)  +/-=meters  s=save  q=quit
+
+# Tune the blue detection - edit detector.color (this keeps your lines intact):
+#   nano ~/Radar/device/config/device_pipeline.json
+#   - car sitting in a zone but shows "blue=0"  -> widen: hsvLower [95,60,20], minPixels 40
+#   - a zone is GREEN with no car present       -> narrow the range / raise minPixels
+
+# Quick config check (prints the key fields):
+#   cd ~/Radar/device
+#   python3 -c "import json;c=json.load(open('config/device_pipeline.json'));print('mode',c['tracking']['crossingMode'],'| meters',c['scene']['metersBetweenLines'],'| servo',c['obstacle']['enabled'],'| limit',c['obstacle']['defaultSpeedLimitKmh'])"
+
+# Demo-day fallback - record one clean run, then replay it if live detection fails:
+#   record: set  "recordTo": "data/demo_run.mp4"   in config -> do one good run -> set it back to ""
+#   replay: set  "sourceVideo": "data/demo_run.mp4" in config -> run (loops the recording)
