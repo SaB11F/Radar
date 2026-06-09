@@ -31,6 +31,12 @@
   },
   "detector": {
     "mode": "bg",
+    "color": {
+      "hsvLower": [100, 80, 30],
+      "hsvUpper": [130, 255, 255],
+      "minPixels": 120,
+      "zoneHalfWidthPx": 45
+    },
     "minContourArea": 4500,
     "bgHistory": 300,
     "bgVarThreshold": 25,
@@ -42,7 +48,7 @@
     }
   },
   "tracking": {
-    "crossingMode": "gate",
+    "crossingMode": "color",
     "maxMatchDistancePx": 80,
     "maxMissedFrames": 8,
     "minTrackAgeFrames": 4,

@@ -1026,6 +1026,112 @@ class LineGateEstimator:
         return None
 
 
+class ColorZoneEstimator:
+    """Color-tripwire speed gate.
+
+    Detects a known-colored object (e.g. a deep-blue car) inside two zones laid
+    over line1 and line2. When the colour first appears in zone 1 it starts the
+    clock; when it appears in zone 2 it stops it; speed = distance / time. Far
+    more robust than motion detection for a fixed-colour object: no background
+    warm-up, ignores hands/shadows/lighting — it only reacts to the target colour.
+    """
+
+    def __init__(self, cfg: Dict):
+        scene = cfg["scene"]
+        self.meters = float(scene["metersBetweenLines"])
+        color = cfg["detector"].get("color", {})
+        self.lower = np.array(color.get("hsvLower", [100, 80, 30]), dtype=np.uint8)
+        self.upper = np.array(color.get("hsvUpper", [130, 255, 255]), dtype=np.uint8)
+        self.min_pixels = int(color.get("minPixels", 120))
+        half = int(color.get("zoneHalfWidthPx", 45))
+        self.zone1 = self._zone_from_line(scene["line1"], half)
+        self.zone2 = self._zone_from_line(scene["line2"], half)
+
+        self.max_window = float(cfg["tracking"]["maxCrossingWindowSec"])
+        self.cooldown = float(cfg["tracking"]["eventCooldownSec"])
+        self.min_speed = float(cfg["tracking"]["minSpeedKmh"])
+        self.max_speed = float(cfg["tracking"]["maxSpeedKmh"])
+
+        self.present1 = False
+        self.present2 = False
+        self.t1: Optional[float] = None
+        self.t2: Optional[float] = None
+        self.count1 = 0
+        self.count2 = 0
+        self.last_event_at = 0.0
+
+    @staticmethod
+    def _zone_from_line(line: Dict[str, int], half: int) -> Tuple[int, int, int, int]:
+        cx = (int(line["x1"]) + int(line["x2"])) // 2
+        y0 = min(int(line["y1"]), int(line["y2"]))
+        y1 = max(int(line["y1"]), int(line["y2"]))
+        x = max(0, cx - half)
+        return (x, y0, max(1, half * 2), max(1, y1 - y0))
+
+    def _count(self, hsv: np.ndarray, zone: Tuple[int, int, int, int]) -> int:
+        x, y, w, h = zone
+        sub = hsv[y:y + h, x:x + w]
+        if sub.size == 0:
+            return 0
+        mask = cv2.inRange(sub, self.lower, self.upper)
+        return int(cv2.countNonZero(mask))
+
+    def update(self, frame: np.ndarray, now: float) -> Optional[Tuple[float, float, str]]:
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        self.count1 = self._count(hsv, self.zone1)
+        self.count2 = self._count(hsv, self.zone2)
+        p1 = self.count1 >= self.min_pixels
+        p2 = self.count2 >= self.min_pixels
+
+        # rising edge = the colour just entered the zone
+        if p1 and not self.present1:
+            self.t1 = now
+        if p2 and not self.present2:
+            self.t2 = now
+        self.present1 = p1
+        self.present2 = p2
+
+        if self.t1 is not None and self.t2 is None and (now - self.t1) > self.max_window:
+            self.t1 = None
+        if self.t2 is not None and self.t1 is None and (now - self.t2) > self.max_window:
+            self.t2 = None
+
+        if self.t1 is not None and self.t2 is not None:
+            dt = abs(self.t2 - self.t1)
+            direction = "line1_to_line2" if self.t1 <= self.t2 else "line2_to_line1"
+            self.t1 = None
+            self.t2 = None
+            if dt <= 0 or dt > self.max_window:
+                return None
+            if now - self.last_event_at < self.cooldown:
+                return None
+            speed_kmh = (self.meters / dt) * 3.6
+            if speed_kmh < self.min_speed or speed_kmh > self.max_speed:
+                return None
+            self.last_event_at = now
+            return speed_kmh, dt, direction
+        return None
+
+    def reset(self) -> None:
+        self.present1 = False
+        self.present2 = False
+        self.t1 = None
+        self.t2 = None
+
+    def draw(self, overlay: np.ndarray) -> None:
+        for zone, present, count, name in (
+            (self.zone1, self.present1, self.count1, "Z1"),
+            (self.zone2, self.present2, self.count2, "Z2"),
+        ):
+            x, y, w, h = zone
+            color = (0, 255, 0) if present else (0, 0, 255)
+            cv2.rectangle(overlay, (x, y), (x + w, y + h), color, 2)
+            cv2.putText(
+                overlay, f"{name} blue={count}", (x, max(12, y - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2,
+            )
+
+
 def run_pipeline(cfg_path: str, uplink_cfg_path: str):
     cfg = load_config(cfg_path)
 
@@ -1070,6 +1176,7 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
     tracker = MultiObjectTracker(cfg)
     crossing_mode = cfg["tracking"].get("crossingMode", "gate")
     gate = LineGateEstimator(cfg) if crossing_mode == "gate" else None
+    color_gate = ColorZoneEstimator(cfg) if crossing_mode == "color" else None
     print(f"[INFO] Crossing mode: {crossing_mode}")
     speed_limit_client = RadarLimitClient(uplink_cfg_path, cfg)
     obstacle = ServoObstacle(cfg)
@@ -1104,6 +1211,8 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     if gate is not None:
                         gate.reset()
+                    if color_gate is not None:
+                        color_gate.reset()
                     continue
                 camera_read_failures += 1
                 time.sleep(0.02)
@@ -1120,12 +1229,33 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
                 fps_t0 = time.perf_counter()
 
             now = time.perf_counter()
-            detections = detector.detect(frame)
-            tracks = tracker.update(detections)
+            if color_gate is not None:
+                detections = []
+                tracks = []
+            else:
+                detections = detector.detect(frame)
+                tracks = tracker.update(detections)
             speed_limit_client.refresh_if_due()
             speed_limit_kmh = speed_limit_client.current_limit
 
-            if gate is not None:
+            if color_gate is not None:
+                crossings = []
+                color_result = color_gate.update(frame, now)
+                if color_result:
+                    speed_kmh, dt, direction = color_result
+                    crossings.append((
+                        speed_kmh,
+                        dt,
+                        direction,
+                        Track(
+                            track_id=0,
+                            centroid=(0, 0),
+                            bbox=(0, 0, 0, 0),
+                            label="blue",
+                            confidence=None,
+                        ),
+                    ))
+            elif gate is not None:
                 crossings = []
                 gate_result = gate.update(detections, now)
                 if gate_result:
@@ -1186,6 +1316,8 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
             if cfg["debug"]["showWindow"] or cfg["debug"]["saveOverlay"]:
                 overlay = frame.copy()
                 draw_overlay(overlay, cfg, tracks, events_count, queue_depth, fps)
+                if color_gate is not None:
+                    color_gate.draw(overlay)
 
                 if cfg["debug"]["showWindow"]:
                     cv2.imshow("radar_device", overlay)
