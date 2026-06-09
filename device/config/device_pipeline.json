@@ -83,7 +83,7 @@
   },
   "obstacle": {
     "enabled": true,
-    "defaultSpeedLimitKmh": 5.0,
+    "defaultSpeedLimitKmh": 2.0,
     "refreshSpeedLimitSec": 10.0,
     "fetchTimeoutSec": 6.0,
     "gpioPin": 18,
