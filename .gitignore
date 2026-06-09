@@ -6,3 +6,9 @@ device/config/uplink.json
 
 # Claude Code local settings (machine-specific)
 .claude/
+
+# Device runtime artifacts (created while the pipeline runs)
+device/data/
+device/src/__pycache__/
+__pycache__/
+*.pyc
