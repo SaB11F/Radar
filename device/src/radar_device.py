@@ -1423,11 +1423,13 @@ def run_pipeline(cfg_path: str, uplink_cfg_path: str):
                 if presence is not None:
                     presence.draw(overlay)
 
-                if cfg["debug"]["showWindow"]:
-                    cv2.imshow("radar_device", overlay)
-                    key = cv2.waitKey(1) & 0xFF
-                    if key == ord("q"):
-                        break
+                if cfg["debug"]["showWindow"] and os.environ.get("DISPLAY"):
+                    try:
+                        cv2.imshow("radar_device", overlay)
+                        if (cv2.waitKey(1) & 0xFF) == ord("q"):
+                            break
+                    except cv2.error:
+                        pass
 
                 if cfg["debug"]["saveOverlay"] and (time.time() - last_debug_save) >= debug_every:
                     cv2.imwrite(overlay_path, overlay)
