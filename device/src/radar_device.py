@@ -1149,12 +1149,15 @@ class PresenceEstimator:
         self.upper = np.array(color.get("hsvUpper", [140, 255, 255]), dtype=np.uint8)
         self.min_pixels = int(color.get("minPixels", 60))
         self.min_visible = float(color.get("minVisibleSec", 0.06))
-        self.max_window = float(cfg["tracking"]["maxCrossingWindowSec"])
+        self.max_window = float(color.get("maxVisibleSec", 30.0))
         self.cooldown = float(cfg["tracking"]["eventCooldownSec"])
         self.max_speed = float(cfg["tracking"]["maxSpeedKmh"])
+        self.factor = float(color.get("presenceFactor", 2.5))
         self.present = False
         self.t_start: Optional[float] = None
         self.count = 0
+        self.baseline: Optional[float] = None
+        self.threshold = float(self.min_pixels)
         self.last_event_at = 0.0
 
     def update(self, frame: np.ndarray, now: float) -> Optional[Tuple[float, float, str]]:
@@ -1165,19 +1168,36 @@ class PresenceEstimator:
         hsv = cv2.cvtColor(sub, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.lower, self.upper)
         self.count = int(cv2.countNonZero(mask))
-        present = self.count >= self.min_pixels
+
+        # Auto-calibrate the empty-scene level (recent minimum, drifts up slowly)
+        # so "present" means a real jump above the background, not an absolute
+        # count. This handles a background that already reads as some blue.
+        if self.baseline is None or self.count < self.baseline:
+            self.baseline = float(self.count)
+        else:
+            self.baseline = 0.999 * self.baseline + 0.001 * self.count
+        self.threshold = max(float(self.min_pixels), self.baseline * self.factor)
+        present = self.count >= self.threshold
 
         result = None
         if present and not self.present:
             self.t_start = now
+            print("[PRESENCE] colour appeared -> timing...")
         elif not present and self.present and self.t_start is not None:
             duration = now - self.t_start
             self.t_start = None
-            if self.min_visible <= duration <= self.max_window and (now - self.last_event_at) >= self.cooldown:
+            if duration < self.min_visible:
+                pass
+            elif duration > self.max_window:
+                print(f"[PRESENCE] gone after {duration:.2f}s (too long >{self.max_window:.0f}s) - no event")
+            elif now - self.last_event_at < self.cooldown:
+                print(f"[PRESENCE] gone after {duration:.2f}s - skipped (cooldown)")
+            else:
                 speed_kmh = (self.meters / duration) * 3.6
                 if 0 < speed_kmh <= self.max_speed:
                     self.last_event_at = now
                     result = (speed_kmh, duration, "pass")
+                    print(f"[PRESENCE] visible {duration:.2f}s -> {speed_kmh:.1f} km/h  EVENT")
         self.present = present
         return result
 
@@ -1189,9 +1209,9 @@ class PresenceEstimator:
         x, y, w, h = self.roi["x"], self.roi["y"], self.roi["w"], self.roi["h"]
         col = (0, 255, 0) if self.present else (0, 0, 255)
         cv2.rectangle(overlay, (x, y), (x + w, y + h), col, 3)
-        label = f"BLUE px={self.count}  {'PRESENT' if self.present else '...'}"
+        label = f"px={self.count} need>{int(self.threshold)} {'PRESENT' if self.present else '...'}"
         cv2.putText(overlay, label, (x + 8, y + 34),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, col, 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, col, 2)
 
 
 def run_pipeline(cfg_path: str, uplink_cfg_path: str):
